@@ -1,8 +1,7 @@
-pyshark
+pyspark
 delta-spark
 psycopg2-binary
 apache-airflow
 flask-appbuilder
 apache-airflow-providers-apache-spark
 graphviz
-# cp airflow/dags/batch_processing_dag.py ~/airflow/dags/
