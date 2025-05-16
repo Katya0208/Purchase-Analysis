@@ -1,0 +1,140 @@
+x-env: &common_env
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports: ["5433:5432"]        # ← удобно для pgAdmin
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports: ["2181:2181"]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    restart: unless-stopped
+    depends_on: [zookeeper]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # два слушателя: для внутренней сети и снаружи хоста
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      kafka:
+        condition: service_healthy      # гарантированно после успешного healthcheck
+    entrypoint: >
+      bash -c "
+        # ждём, пока брокер начинает отвечать уверенно
+        until kafka-topics --bootstrap-server kafka:9092 --list 1>/dev/null 2>&1; do
+          echo 'Жду готовности Kafka ...'; sleep 3;
+        done;
+        # cоздаём бизнес-топик
+        kafka-topics --bootstrap-server kafka:9092 \
+          --create --if-not-exists \
+          --topic purchases --partitions 3 --replication-factor 1
+      "
+    restart: 'no'
+
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    restart: unless-stopped
+    ports: ["8123:8123", "9000:9000"]
+    volumes:
+      - chdata:/var/lib/clickhouse
+  spark-master:
+    image: bitnami/spark:3.5
+    restart: unless-stopped
+    environment:
+      SPARK_MODE: master
+    ports: ["7077:7077", "8080:8080"]
+
+  spark-worker:
+    image: bitnami/spark:3.5
+    restart: unless-stopped
+    depends_on: [spark-master]
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 2G
+      SPARK_WORKER_CORES: 2
+
+  streaming:
+    build:
+      context: ../streaming    # путь от docker/ до папки streaming
+      dockerfile: Dockerfile
+    container_name: streaming_consumer
+    depends_on:
+      - kafka
+      - clickhouse
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PURCHASES_TOPIC: purchases
+    restart: unless-stopped
+  minio:
+    image: minio/minio:latest
+    environment: *common_env
+    command: server /data --console-address ":9001"
+    ports:
+      - "9002:9000"    # API наружу
+      - "9001:9001"    # консоль
+    volumes:
+      - minio-data:/data
+    healthcheck:                # <-- добавляем!
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 3    
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy   # ждём healthcheck
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set myminio http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD && \
+        mc mb --ignore-existing myminio/products && \
+        mc mb --ignore-existing myminio/stage
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    restart: "no"
+  
+
+
+
+
+volumes:
+  pgdata:
+  chdata:
+  minio-data:
+
