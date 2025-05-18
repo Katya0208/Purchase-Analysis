@@ -73,7 +73,11 @@ services:
     restart: unless-stopped
     environment:
       SPARK_MODE: master
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}   # <- добавить
     ports: ["7077:7077", "8080:8080"]
+    volumes:
+      - ../:/workspace
 
   spark-worker:
     image: bitnami/spark:3.5
@@ -84,6 +88,11 @@ services:
       SPARK_MASTER_URL: spark://spark-master:7077
       SPARK_WORKER_MEMORY: 2G
       SPARK_WORKER_CORES: 2
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ../:/workspace
+
 
   streaming:
     build:

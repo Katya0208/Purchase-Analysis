@@ -53,11 +53,18 @@ jdbc_url = f"jdbc:postgresql://{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 props = {"user": POSTGRES_USER, "password": POSTGRES_PWD, "driver": "org.postgresql.Driver"}
 
 for name in ("clients", "sellers"):
-    (spark.read.jdbc(jdbc_url, f"public.{name}", props)
-          .withColumn("load_date", F.current_date())
-          .write.format("iceberg").mode("overwrite")
-          .save(f"spark_catalog.default.stage_{name}"))
+    (
+        spark.read.jdbc(
+            url=jdbc_url,
+            table=f"public.{name}",
+            properties=props          # <-- ключевое слово
+        )
+        .withColumn("load_date", F.current_date())
+        .write.format("iceberg").mode("overwrite")
+        .saveAsTable(f"spark_catalog.default.stage_{name}")
+    )
     print(f"✓ stage_{name}")
+
 
 # ---------- MinIO (products Parquet / Iceberg) --------------------
 try:
@@ -67,7 +74,7 @@ except Exception:
 
 (df_prod.withColumn("load_date", F.current_date())
        .write.format("iceberg").mode("overwrite")
-       .save("spark_catalog.default.stage_products"))
+       .saveAsTable("spark_catalog.default.stage_products"))
 print("✓ stage_products")
 
 # ---------- Kafka purchases → Iceberg -----------------------------
@@ -92,7 +99,7 @@ purchases = (raw.select(F.from_json(F.col("value").cast("string"), schema).alias
                  .withColumn("load_date", F.current_date()))
 
 (purchases.write.format("iceberg").mode("overwrite")
-         .save("spark_catalog.default.stage_purchases"))
+         .saveAsTable("spark_catalog.default.stage_purchases"))
 print("✓ stage_purchases")
 
 print("✅ Stage ETL done")

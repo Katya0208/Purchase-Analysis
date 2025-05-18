@@ -9,7 +9,7 @@ app = FastAPI()
 
 producer = KafkaProducer(
     bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"),
-    value_serializer=lambda v: json.dumps(v).encode(),
+    value_serializer=lambda v: json.dumps(v, default=str).encode(),
 )
 
 class Purchase(BaseModel):
