@@ -85,13 +85,18 @@ psql -U $POSTGRES_USER -d $POSTGRES_DB
 ```
 
 ```sql
-INSERT INTO clients (client_id, first_name, last_name, email) VALUES
-  ('uuid1', 'Ivan', 'Ivanov', 'ivan@example.com'),
-  ('uuid2', 'Maria', 'Petrova', 'maria@example.com');
+-- Добавляем клиентов
+INSERT INTO clients (client_id, first_name, last_name, email, phone, address)
+VALUES
+  (gen_random_uuid(), 'Анна', 'Смирнова', 'anna@example.com', '+37120000001', 'Рига, ул. Ленина, 5'),
+  (gen_random_uuid(), 'Олег', 'Кузнецов', 'oleg@example.com', '+37120000002', 'Даугавпилс, ул. Свободы, 10');
 
-INSERT INTO sellers (seller_id, name, contact_email) VALUES
-  ('uuid3', 'Shop A', 'contact@shopa.com'),
-  ('uuid4', 'Shop B', 'contact@shopb.com');
+-- Добавляем продавцов
+INSERT INTO sellers (seller_id, name, contact_email, contact_phone, rating)
+VALUES
+  (gen_random_uuid(), 'BestShop', 'contact@bestshop.lv', '+37130000001', 4.8),
+  (gen_random_uuid(), 'SuperStore', 'info@superstore.lv', '+37130000002', 4.6);
+
 ```
 
 ```sql
@@ -104,6 +109,9 @@ q
 \q
 exit
 ```
+## Minio
+
+Заходим, логинимся с данными из .env http://127.0.0.1:9001. При создании контейнера должно создаться 2 backetа: products и stage.
 
 ### Товары
 
@@ -116,9 +124,15 @@ exit
    mc alias set myminio http://localhost:9001 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
    mc cp sample_products.parquet myminio/products/
    ```
-   Можно через сайт, http://localhost:9002, открывает backet products и добавляем файл .parquet через Upload
+   Можно через сайт, http://localhost:9001, открывает backet products и добавляем файл .parquet через Upload
 
 ---
+
+## API
+
+```bash
+uvicorn main:app --reload --port 8000 &
+```
 
 ## Запуск streaming-консьюмера
 
@@ -130,6 +144,12 @@ python streaming/consumer.py
 - Будет слушать топик `purchases` и записывать каждое сообщение.
 
 ---
+
+## Kafka + API
+
+Заходим на http://127.0.0.1:8000/docs, добавляем покупки через Try it out -> Execute.
+
+
 
 ## Проверка ClickHouse
 
