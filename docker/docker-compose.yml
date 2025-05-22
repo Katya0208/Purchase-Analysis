@@ -151,12 +151,15 @@ services:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       PURCHASES_TOPIC: purchases
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_USER: default
       CLICKHOUSE_PASSWORD: ""
+
 
 volumes:
   pgdata:
