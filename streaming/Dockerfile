@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем сам скрипт
 COPY consumer.py .
+COPY validate_clickhouse.py .
 
 # По умолчанию запускаем консьюмера
 CMD ["python", "consumer.py"]
