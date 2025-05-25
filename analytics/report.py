@@ -1,6 +1,6 @@
 import os
 from pyspark.sql import SparkSession, functions as F, Window
-import requests
+# import requests
 
 # ------------- Переменные окружения ----------------------
 WAREHOUSE = "s3a://stage/warehouse"     # Iceberg warehouse
@@ -58,61 +58,128 @@ sellers.show(truncate=False)
 
 # ------------- Аналитика: Примеры ------------------------
 
-# 1. Общая выручка по категориям товаров
-revenue_by_category = (
-    purchases.alias("p")  # Алиас для покупок
-    .join(products.alias("pr"), "product_id")  # Алиас для продуктов
-    .groupBy("category")
-    .agg(
-        F.sum(F.col("quantity") * F.col("pr.price")).alias("total_revenue"),  # ← явно указываем pr.price
-        F.countDistinct("purchase_id").alias("total_purchases")
+# # 1. Общая выручка по категориям товаров
+# revenue_by_category = (
+#     purchases.alias("p")  # Алиас для покупок
+#     .join(products.alias("pr"), "product_id")  # Алиас для продуктов
+#     .groupBy("category")
+#     .agg(
+#         F.sum(F.col("quantity") * F.col("pr.price")).alias("total_revenue"),  # ← явно указываем pr.price
+#         F.countDistinct("purchase_id").alias("total_purchases")
+#     )
+#     .orderBy(F.desc("total_revenue"))
+# )
+
+# # 2. Топ 10 клиентов по количеству покупок
+# top_clients = (
+#     purchases.groupBy("client_id")
+#     .agg(F.count("*").alias("purchase_count"))
+#     .orderBy(F.desc("purchase_count"))
+#     .limit(10)
+# )
+
+# # 3. Средний чек по дням
+# avg_check_by_day = (
+#     purchases.withColumn("date", F.to_date("timestamp"))
+#     .groupBy("date")
+#     .agg(
+#         F.avg(F.col("quantity") * F.col("price")).alias("avg_check"),
+#         F.countDistinct("purchase_id").alias("purchases_per_day")
+#     )
+#     .orderBy("date")
+# )
+
+# # 4. Продавцы с наибольшим количеством продаж
+# windowSpec = Window.orderBy(F.desc("total_sales"))
+
+# top_products = (
+#     purchases.groupBy("product_id")
+#     .agg(F.sum("quantity").alias("total_sales"))
+#     .join(products, "product_id")  # чтобы получить name
+#     .select("product_id", "name", "total_sales")
+#     .withColumn("rank", F.rank().over(windowSpec))
+#     .filter(F.col("rank") == 1)
+# )
+
+def calculate_revenue_by_category(purchases_df, products_df) -> list:
+    """Рассчитывает общую выручку и количество покупок по категориям товаров"""
+    df = (
+        purchases_df.alias("p")
+        .join(products_df.alias("pr"), "product_id")
+        .groupBy("category")
+        .agg(
+            F.sum(F.col("quantity") * F.col("pr.price")).alias("total_revenue"),
+            F.countDistinct("purchase_id").alias("total_purchases")
+        )
+        .orderBy(F.desc("total_revenue"))
     )
-    .orderBy(F.desc("total_revenue"))
-)
+    return [row.asDict() for row in df.collect()]
 
-# 2. Топ 10 клиентов по количеству покупок
-top_clients = (
-    purchases.groupBy("client_id")
-    .agg(F.count("*").alias("purchase_count"))
-    .orderBy(F.desc("purchase_count"))
-    .limit(10)
-)
-
-# 3. Средний чек по дням
-avg_check_by_day = (
-    purchases.withColumn("date", F.to_date("timestamp"))
-    .groupBy("date")
-    .agg(
-        F.avg(F.col("quantity") * F.col("price")).alias("avg_check"),
-        F.countDistinct("purchase_id").alias("purchases_per_day")
+def get_top_clients(purchases_df, limit=10) -> list:
+    """Возвращает топ N клиентов по количеству покупок"""
+    df = (
+        purchases_df.groupBy("client_id")
+        .agg(F.count("*").alias("purchase_count"))
+        .orderBy(F.desc("purchase_count"))
+        .limit(limit)
     )
-    .orderBy("date")
-)
+    return [row.asDict() for row in df.collect()]
 
-# 4. Продавцы с наибольшим количеством продаж
-windowSpec = Window.orderBy(F.desc("total_sales"))
+def calculate_avg_check_by_day(purchases_df) -> list:
+    """Рассчитывает средний чек и количество покупок по дням"""
+    df = (
+        purchases_df.withColumn("date", F.to_date("timestamp"))
+        .groupBy("date")
+        .agg(
+            F.coalesce(
+                F.avg(F.col("quantity") * F.col("price")),
+                F.lit(0.0)
+            ).alias("avg_check"),
+            F.coalesce(
+                F.countDistinct("purchase_id"), 
+                F.lit(0)
+            ).alias("purchases_per_day")
+        )
+        .orderBy("date")
+    )
+    return [row.asDict() for row in df.collect()]
 
-top_products = (
-    purchases.groupBy("product_id")
-    .agg(F.sum("quantity").alias("total_sales"))
-    .join(products, "product_id")  # чтобы получить name
-    .select("product_id", "name", "total_sales")
-    .withColumn("rank", F.rank().over(windowSpec))
-    .filter(F.col("rank") == 1)
-)
+def get_top_selling_products(purchases_df, products_df) -> list:
+    """Возвращает продукты с наибольшим количеством продаж"""
+    windowSpec = Window.orderBy(F.desc("total_sales"))
+    df = (
+        purchases_df.groupBy("product_id")
+        .agg(F.sum("quantity").alias("total_sales"))
+        .join(products_df, "product_id")
+        .select("product_id", "name", "total_sales")
+        .withColumn("rank", F.rank().over(windowSpec))
+        .filter(F.col("rank") == 1)
+    )
+    return [row.asDict() for row in df.collect()]
 
 # ------------- Вывод результатов в консоль ---------------
 print("=== Общая выручка по категориям ===")
-revenue_by_category.show(truncate=False)
+revenue_data = calculate_revenue_by_category(purchases, products)
+for item in revenue_data:
+    print(f"{item['category']}: {item['total_revenue']} руб. ({item['total_purchases']} покупок)")
+print("\n\n")
 
 print("=== Топ 10 клиентов ===")
-top_clients.show(truncate=False)
+top_clients_data = get_top_clients(purchases, 5)
+for idx, client in enumerate(top_clients_data, 1):
+    print(f"{idx}. Клиент {client['client_id']}: {client['purchase_count']} покупок")
+print("\n\n")
 
 print("=== Средний чек по дням ===")
-avg_check_by_day.show(truncate=False)
+avg_check_data = calculate_avg_check_by_day(purchases)
+for day in avg_check_data:
+    print(f"{day['date']}: {day['avg_check']:.2f} руб. ({day['purchases_per_day']} покупок)")
+print("\n\n")
 
 print("=== Продукты с наибольшим количеством продаж ===")
-top_products.show(truncate=False)
+top_products_data = get_top_selling_products(purchases, products)
+for product in top_products_data:
+    print(f"{product['name']}: {product['total_sales']} шт.")
 
 # ------------- Завершение -------------------------------
 spark.stop()
