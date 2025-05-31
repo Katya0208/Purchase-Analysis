@@ -207,28 +207,6 @@ stage_purchases: X rows
 
 ---
 
-## Вывод анализа данных со Stage
-```bash
-docker compose exec spark-master spark-submit \
-  --master spark://spark-master:7077 \
-  --conf spark.driver.host=spark-master \
-  --conf spark.executor.host=spark-worker \
-  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.2,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-aws:3.3.4,software.amazon.awssdk:bundle:2.17.119 \
-  /workspace/analytics/report.py
-```
-
-Ожидаемый вывод таблиц:
-- `Таблица stage_clients`
-- `Таблица stage_sellers`
-- `Таблица stage_products`
-- `Таблица stage_purchases`  
-
-Ожидаемый вывод аналитики:ы
-- `Общая выручка по категориям`
-- `Топ 10 клиентов`
-- `Средний чек по дням`
-- `Продукты с наибольшим количеством продаж`
-
 ## Полезные команды
 
 - Остановка всех: `docker compose down`  

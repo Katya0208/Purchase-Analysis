@@ -10,7 +10,12 @@ from confluent_kafka import Consumer, KafkaException
 from clickhouse_driver import Client
 
 # Настройка ClickHouse
-client = Client(host="localhost")
+client = Client(
+    host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+    user=os.getenv("CLICKHOUSE_USER", "default"),
+    password=os.getenv("CLICKHOUSE_PASSWORD", "")
+)
+
 client.execute("""
 CREATE TABLE IF NOT EXISTS purchases_rt (
   purchase_id String,
