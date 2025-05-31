@@ -121,7 +121,7 @@ exit
    ```
 2. Загрузить в MinIO:
    ```bash
-   mc alias set myminio http://localhost:9001 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+   mc alias set myminio http://localhost:9002 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
    mc cp sample_products.parquet myminio/products/
    ```
    Можно через сайт, http://localhost:9001, открывает backet products и добавляем файл .parquet через Upload
