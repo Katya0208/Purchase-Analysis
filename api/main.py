@@ -4,21 +4,22 @@ from pydantic import BaseModel, condecimal
 from uuid import UUID, uuid4
 from kafka import KafkaProducer
 import uuid, datetime, os, json
+from typing import Union, Optional
+from confluent_kafka import Producer
 
 app = FastAPI()
 
-producer = KafkaProducer(
-    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"),
-    value_serializer=lambda v: json.dumps(v, default=str).encode(),
-)
+producer = Producer({
+    'bootstrap.servers': os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
+})
 
 class Purchase(BaseModel):
-    purchase_id: UUID | None = None
-    client_id:   UUID
-    product_id:  UUID
-    quantity:    int
-    price:       condecimal(gt=0)
-    timestamp:   datetime.datetime
+    purchase_id: Optional[UUID] = None
+    client_id: str
+    product_id: str
+    quantity: int
+    price: float
+    timestamp: str
 
 # -------------------- Эндпоинт: raw_purchase --------------------------------------
 @app.post("/api/raw_purchase", response_model=dict, openapi_extra={
@@ -44,7 +45,10 @@ async def raw_purchase(request: Request):
     """
     data = await request.json()
     try:
-        producer.send("purchases", data)
+        producer.produce(
+            topic=os.getenv("PURCHASES_TOPIC", "purchases"),
+            value=json.dumps(data).encode('utf-8')
+        )
         producer.flush()
         return {"status": "ok", "data": data}
     except Exception as e:
@@ -64,7 +68,10 @@ async def create_purchase(p: Purchase):
         rec["purchase_id"] = uuid4()
     # Убедимся, что timestamp — datetime (Pydantic гарантирует)
     try:
-        producer.send("purchases", rec)
+        producer.produce(
+            topic=os.getenv("PURCHASES_TOPIC", "purchases"),
+            value=json.dumps(rec).encode('utf-8')
+        )
         producer.flush()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
