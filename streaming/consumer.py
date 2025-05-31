@@ -39,47 +39,56 @@ CREATE TABLE IF NOT EXISTS purchases_rt (
 # Настройка Kafka Consumer
 conf = {
     'bootstrap.servers': os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"),
-    'group.id': 'purchase-consumers',
-    'auto.offset.reset': 'earliest',
+    'group.id': f'purchase-consumer-{int(datetime.datetime.now().timestamp())}',  # Уникальный ID группы
+    'auto.offset.reset': 'latest',  # Читаем только новые сообщения
+    'enable.auto.commit': False  # Отключаем авто-коммит
 }
 consumer = Consumer(conf)
 consumer.subscribe([os.getenv("PURCHASES_TOPIC", "purchases")])
 
 print("✅ Consumer started, waiting for messages…")
+print(f"Using consumer group: {conf['group.id']}")
+
 try:
     while True:
         msg = consumer.poll(1.0)
         if msg is None:
             continue
         if msg.error():
-            raise KafkaException(msg.error())
+            print(f"Error: {msg.error()}")
+            continue
 
         # Десериализуем
-        r = json.loads(msg.value().decode('utf-8'))
+        try:
+            r = json.loads(msg.value().decode('utf-8'))
+            print(f"Received message: {r}")
 
-        # Приводим price к float
-        price = float(r["price"])
+            # Приводим price к float
+            price = float(r["price"])
 
-        # Парсим timestamp в datetime
-        # Пример r["timestamp"] = "2025-05-18T12:00:00Z"
-        ts_str = r["timestamp"]
-        # Заменяем 'Z' на '+00:00' для fromisoformat
-        if ts_str.endswith("Z"):
-            ts_str = ts_str[:-1] + "+00:00"
-        ts = datetime.datetime.fromisoformat(ts_str)
+            # Парсим timestamp в datetime
+            ts_str = r["timestamp"]
+            if ts_str.endswith("Z"):
+                ts_str = ts_str[:-1] + "+00:00"
+            ts = datetime.datetime.fromisoformat(ts_str)
 
-        # Записываем в ClickHouse
-        client.execute(
-            "INSERT INTO purchases_rt VALUES",
-            [(
-                r["purchase_id"],
-                r["client_id"],
-                r["product_id"],
-                r["quantity"],
-                price,
-                ts
-            )]
-        )
+            # Записываем в ClickHouse
+            client.execute(
+                "INSERT INTO purchases_rt VALUES",
+                [(
+                    r["purchase_id"],
+                    r["client_id"],
+                    r["product_id"],
+                    r["quantity"],
+                    price,
+                    ts
+                )]
+            )
+            # Ручной коммит после успешной обработки
+            consumer.commit(msg)
+        except Exception as e:
+            print(f"Error processing message: {e}")
+            continue
 except KeyboardInterrupt:
     pass
 finally:

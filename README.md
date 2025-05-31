@@ -149,6 +149,11 @@ python streaming/consumer.py
 
 Заходим на http://127.0.0.1:8000/docs, добавляем покупки через Try it out -> Execute.
 
+Можно проверить consumer.py, запустив его в одном терминале, а потом в другом
+```bash
+echo '{"purchase_id": "test-003", "client_id": "client-003", "product_id": "prod-033", "quantity": 3, "price": 199.99, "timestamp": "2024-03-19T23:10:00Z"}' | docker exec -i docker-kafka-1 kafka-console-producer --broker-list localhost:9092 --topic purchases
+```
+
 
 
 ## Проверка ClickHouse
