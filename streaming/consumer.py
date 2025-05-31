@@ -8,9 +8,23 @@ import os
 import datetime
 from confluent_kafka import Consumer, KafkaException
 from clickhouse_driver import Client
+import sys
 
 # Настройка ClickHouse
-client = Client(host="localhost")
+client = Client(
+    host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+    user=os.getenv("CLICKHOUSE_USER", "default"),
+    password=os.getenv("CLICKHOUSE_PASSWORD", "")
+)
+
+# HEALTHCHECK: если запущен с флагом --check-health, просто проверим ClickHouse
+if "--check-health" in sys.argv:
+    try:
+        client.execute("SELECT 1")
+        sys.exit(0)
+    except Exception as e:
+        sys.exit(1)
+
 client.execute("""
 CREATE TABLE IF NOT EXISTS purchases_rt (
   purchase_id String,

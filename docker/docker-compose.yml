@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports: ["5433:5432"]        # ← удобно для pgAdmin
+    ports: ["5433:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d
@@ -29,7 +29,6 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      # два слушателя: для внутренней сети и снаружи хоста
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
@@ -47,67 +46,55 @@ services:
     image: confluentinc/cp-kafka:7.6.0
     depends_on:
       kafka:
-        condition: service_healthy      # гарантированно после успешного healthcheck
+        condition: service_healthy
     entrypoint: >
       bash -c "
-        # ждём, пока брокер начинает отвечать уверенно
-        until kafka-topics --bootstrap-server kafka:9092 --list 1>/dev/null 2>&1; do
-          echo 'Жду готовности Kafka ...'; sleep 3;
+        until kafka-topics --bootstrap-server kafka:9092 --list &>/dev/null; do
+          echo '⏳ Жду готовности Kafka ...'; sleep 3;
         done;
-        # cоздаём бизнес-топик
-        kafka-topics --bootstrap-server kafka:9092 \
-          --create --if-not-exists \
-          --topic purchases --partitions 3 --replication-factor 1
+        echo '✅ Kafka готов. Создаю топик purchases...';
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic purchases --partitions 3 --replication-factor 1
       "
     restart: 'no'
-
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.1
     restart: unless-stopped
     ports: ["8123:8123", "9000:9000"]
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     volumes:
       - chdata:/var/lib/clickhouse
+
   spark-master:
-    user: root
     image: bitnami/spark:3.5
+    restart: unless-stopped
     environment:
-      USER: spark
-      GROUP: spark
       SPARK_MODE: master
-      SPARK_LOCAL_DIRS: /opt/spark/work-dir
-      IVY_HOME: /home/spark/.ivy2
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      HOME: /home/spark
+      <<: *common_env
     ports: ["7077:7077", "8080:8080"]
     volumes:
-      - spark-home:/home/spark
-      - spark-work:/opt/spark/work-dir
-      - spark-ivy:/opt/spark/ivy
       - ../:/workspace
 
   spark-worker:
-    user: "1001:1001"
     image: bitnami/spark:3.5
+    restart: unless-stopped
+    depends_on: [spark-master]
     environment:
       SPARK_MODE: worker
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_LOCAL_DIRS: /opt/spark/work-dir
-      IVY_HOME: /home/spark/.ivy2
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      HOME: /home/spark
+      SPARK_WORKER_MEMORY: 2G
+      SPARK_WORKER_CORES: 2
+      <<: *common_env
     volumes:
-      - spark-home:/home/spark
-      - spark-work:/opt/spark/work-dir
-      - spark-ivy:/opt/spark/ivy
       - ../:/workspace
-
 
   streaming:
     build:
-      context: ../streaming    # путь от docker/ до папки streaming
+      context: ../streaming
       dockerfile: Dockerfile
     container_name: streaming_consumer
     depends_on:
@@ -116,27 +103,56 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       PURCHASES_TOPIC: purchases
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
     restart: unless-stopped
+
+  kafka-to-clickhouse:
+    build:
+      context: ../streaming
+      dockerfile: Dockerfile
+    container_name: kafka-to-clickhouse
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PURCHASES_TOPIC: purchases
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "consumer.py", "--check-health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   minio:
     image: minio/minio:latest
     environment: *common_env
     command: server /data --console-address ":9001"
     ports:
-      - "9002:9000"    # API наружу
-      - "9001:9001"    # консоль
+      - "9002:9000"
+      - "9001:9001"
     volumes:
       - minio-data:/data
-    healthcheck:                # <-- добавляем!
+    healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
       interval: 5s
       timeout: 5s
-      retries: 3    
+      retries: 3
 
   minio-init:
     image: minio/mc
     depends_on:
       minio:
-        condition: service_healthy   # ждём healthcheck
+        condition: service_healthy
     entrypoint:
       - /bin/sh
       - -c
@@ -145,16 +161,11 @@ services:
         mc mb --ignore-existing myminio/products && \
         mc mb --ignore-existing myminio/stage
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      <<: *common_env
     restart: "no"
-  
-
 
 volumes:
-  spark-home:
-  spark-work:
-  spark-ivy:
   pgdata:
   chdata:
   minio-data:
+
