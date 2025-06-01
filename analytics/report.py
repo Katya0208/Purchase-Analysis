@@ -1,21 +1,17 @@
 import os
 from pyspark.sql import SparkSession, functions as F, Window
-# import requests
 
-# ------------- Переменные окружения ----------------------
 WAREHOUSE = "s3a://stage/warehouse"     # Iceberg warehouse
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_KEY = os.getenv("MINIO_ROOT_USER", "minio")
 MINIO_SECRET = os.getenv("MINIO_ROOT_PASSWORD", "minio123")
 
-# ------------- Spark Session -----------------------------
 spark = (
     SparkSession.builder.appName("Analytics_Job")
     .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
     .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkSessionCatalog")
     .config("spark.sql.catalog.spark_catalog.type", "hadoop")
     .config("spark.sql.catalog.spark_catalog.warehouse", WAREHOUSE)
-    # S3A (MinIO)
     .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
     .config("spark.hadoop.fs.s3a.access.key", MINIO_KEY)
     .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET)
@@ -28,14 +24,12 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-# ------------- Чтение таблиц из Iceberg ------------------
-# ------------- Чтение таблиц из Iceberg ------------------
 clients = spark.read.format("iceberg").load("spark_catalog.default.stage_clients")
 products = spark.read.format("iceberg").load("spark_catalog.default.stage_products")
 purchases = spark.read.format("iceberg").load("spark_catalog.default.stage_purchases")
 sellers = spark.read.format("iceberg").load("spark_catalog.default.stage_sellers")
 
-# ------------- Проверка данных ---------------------------
+#Проверка
 print("=== stage_clients ===")
 clients.printSchema()
 print(f"Количество записей: {clients.count()}")
@@ -56,59 +50,14 @@ sellers.printSchema()
 print(f"Количество записей: {sellers.count()}")
 sellers.show(truncate=False)
 
-# ------------- Аналитика: Примеры ------------------------
-
-# # 1. Общая выручка по категориям товаров
-# revenue_by_category = (
-#     purchases.alias("p")  # Алиас для покупок
-#     .join(products.alias("pr"), "product_id")  # Алиас для продуктов
-#     .groupBy("category")
-#     .agg(
-#         F.sum(F.col("quantity") * F.col("pr.price")).alias("total_revenue"),  # ← явно указываем pr.price
-#         F.countDistinct("purchase_id").alias("total_purchases")
-#     )
-#     .orderBy(F.desc("total_revenue"))
-# )
-
-# # 2. Топ 10 клиентов по количеству покупок
-# top_clients = (
-#     purchases.groupBy("client_id")
-#     .agg(F.count("*").alias("purchase_count"))
-#     .orderBy(F.desc("purchase_count"))
-#     .limit(10)
-# )
-
-# # 3. Средний чек по дням
-# avg_check_by_day = (
-#     purchases.withColumn("date", F.to_date("timestamp"))
-#     .groupBy("date")
-#     .agg(
-#         F.avg(F.col("quantity") * F.col("price")).alias("avg_check"),
-#         F.countDistinct("purchase_id").alias("purchases_per_day")
-#     )
-#     .orderBy("date")
-# )
-
-# # 4. Продавцы с наибольшим количеством продаж
-# windowSpec = Window.orderBy(F.desc("total_sales"))
-
-# top_products = (
-#     purchases.groupBy("product_id")
-#     .agg(F.sum("quantity").alias("total_sales"))
-#     .join(products, "product_id")  # чтобы получить name
-#     .select("product_id", "name", "total_sales")
-#     .withColumn("rank", F.rank().over(windowSpec))
-#     .filter(F.col("rank") == 1)
-# )
-
 def calculate_revenue_by_category(purchases_df, products_df) -> list:
     """Рассчитывает общую выручку и количество покупок по категориям товаров"""
     df = (
         purchases_df.alias("p")
-        .join(products_df.alias("pr"), "product_id")
-        .groupBy("category")
+        .join(products_df.alias("pr"), "product_id", "left")
+        .groupBy(F.coalesce("category", F.lit("N/A")).alias("category"))
         .agg(
-            F.sum(F.col("quantity") * F.col("pr.price")).alias("total_revenue"),
+            F.sum(F.col("quantity") * F.col("p.price")).alias("total_revenue"),
             F.countDistinct("purchase_id").alias("total_purchases")
         )
         .orderBy(F.desc("total_revenue"))
@@ -127,37 +76,41 @@ def get_top_clients(purchases_df, limit=10) -> list:
 
 def calculate_avg_check_by_day(purchases_df) -> list:
     """Рассчитывает средний чек и количество покупок по дням"""
+    purchase_totals = purchases_df.groupBy("purchase_id", "timestamp").agg(
+        F.sum(F.col("quantity") * F.col("price")).alias("purchase_total")
+    )
+    
     df = (
-        purchases_df.withColumn("date", F.to_date("timestamp"))
+        purchase_totals.withColumn("date", F.to_date("timestamp"))
         .groupBy("date")
         .agg(
-            F.coalesce(
-                F.avg(F.col("quantity") * F.col("price")),
-                F.lit(0.0)
-            ).alias("avg_check"),
-            F.coalesce(
-                F.countDistinct("purchase_id"), 
-                F.lit(0)
-            ).alias("purchases_per_day")
+            F.avg("purchase_total").alias("avg_check"),
+            F.countDistinct("purchase_id").alias("purchases_per_day")
         )
         .orderBy("date")
     )
     return [row.asDict() for row in df.collect()]
 
-def get_top_selling_products(purchases_df, products_df) -> list:
+def get_top_selling_products(purchases_df, products_df, limit=10) -> list:
     """Возвращает продукты с наибольшим количеством продаж"""
-    windowSpec = Window.orderBy(F.desc("total_sales"))
+    windowSpec = Window.partitionBy(F.lit(1)).orderBy(F.desc("total_sales"))
+    
     df = (
         purchases_df.groupBy("product_id")
         .agg(F.sum("quantity").alias("total_sales"))
-        .join(products_df, "product_id")
-        .select("product_id", "name", "total_sales")
-        .withColumn("rank", F.rank().over(windowSpec))
-        .filter(F.col("rank") == 1)
+        .join(products_df, "product_id", "left")  # left join для сохранения всех продуктов
+        .select(
+            "product_id",
+            F.coalesce("name", F.lit("Unknown")).alias("name"),
+            "total_sales"
+        )
+        .withColumn("rank", F.dense_rank().over(windowSpec))
+        .filter(F.col("rank") <= limit)  # Топ-N вместо только первого места
+        .orderBy("rank")
     )
     return [row.asDict() for row in df.collect()]
 
-# ------------- Вывод результатов в консоль ---------------
+#Вывод
 print("=== Общая выручка по категориям ===")
 revenue_data = calculate_revenue_by_category(purchases, products)
 for item in revenue_data:
@@ -181,12 +134,4 @@ top_products_data = get_top_selling_products(purchases, products)
 for product in top_products_data:
     print(f"{product['name']}: {product['total_sales']} шт.")
 
-# ------------- Завершение -------------------------------
 spark.stop()
-
-# docker compose exec spark-master spark-submit \
-#   --master spark://spark-master:7077 \
-#   --conf spark.driver.host=spark-master \
-#   --conf spark.executor.host=spark-worker \
-#   --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.2,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-aws:3.3.4,software.amazon.awssdk:bundle:2.17.119 \
-#   /workspace/analytics/report.py
