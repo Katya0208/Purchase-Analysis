@@ -70,26 +70,39 @@ services:
       - chdata:/var/lib/clickhouse
 
   spark-master:
+    user: root
     image: bitnami/spark:3.5
-    restart: unless-stopped
     environment:
+      USER: spark
+      GROUP: spark
       SPARK_MODE: master
-      <<: *common_env
+      SPARK_LOCAL_DIRS: /opt/spark/work-dir
+      IVY_HOME: /home/spark/.ivy2
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      HOME: /home/spark
     ports: ["7077:7077", "8080:8080"]
     volumes:
+      - spark-home:/home/spark
+      - spark-work:/opt/spark/work-dir
+      - spark-ivy:/opt/spark/ivy
       - ../:/workspace
 
   spark-worker:
+    user: "1001:1001"
     image: bitnami/spark:3.5
-    restart: unless-stopped
-    depends_on: [spark-master]
     environment:
       SPARK_MODE: worker
       SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_WORKER_MEMORY: 2G
-      SPARK_WORKER_CORES: 2
-      <<: *common_env
+      SPARK_LOCAL_DIRS: /opt/spark/work-dir
+      IVY_HOME: /home/spark/.ivy2
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      HOME: /home/spark
     volumes:
+      - spark-home:/home/spark
+      - spark-work:/opt/spark/work-dir
+      - spark-ivy:/opt/spark/ivy
       - ../:/workspace
 
   streaming:
@@ -165,7 +178,9 @@ services:
     restart: "no"
 
 volumes:
+  spark-home:
+  spark-work:
+  spark-ivy:
   pgdata:
   chdata:
   minio-data:
-
