@@ -222,28 +222,7 @@ async def get_seller(seller_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/purchases", response_model=Purchase, tags=["data_management"])
-async def create_purchase(purchase: Purchase):
-    """
-    Добавление новой покупки в систему.
-    Отправляет данные в Kafka для последующей обработки.
-    """
-    try:
-        # Если нет purchase_id, генерируем новый
-        if purchase.purchase_id is None:
-            purchase.purchase_id = uuid4()
-            
-        # Отправляем данные в Kafka
-        producer.produce(
-            topic=os.getenv("PURCHASES_TOPIC", "purchases"),
-            value=json.dumps(purchase.dict()).encode('utf-8')
-        )
-        producer.flush()
-        return purchase
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
-
-@app.get("/api/purchases", response_model=List[Purchase], tags=["data_management"])
+@app.get("/api/purchase", response_model=List[Purchase], tags=["data_management"])
 async def get_purchases(
     client_id: Optional[str] = None,
     product_id: Optional[str] = None,
@@ -299,41 +278,6 @@ async def get_purchases(
             }
             for row in result
         ]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/purchases/{purchase_id}", response_model=Purchase, tags=["data_management"])
-async def get_purchase(purchase_id: str):
-    """
-    Получение информации о конкретной покупке
-    """
-    try:
-        query = """
-        SELECT 
-            purchase_id,
-            client_id,
-            product_id,
-            quantity,
-            price,
-            timestamp
-        FROM purchases_rt
-        WHERE purchase_id = %s
-        """
-        
-        result = clickhouse_client.execute(query, [purchase_id])
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="Purchase not found")
-            
-        row = result[0]
-        return {
-            "purchase_id": row[0],
-            "client_id": row[1],
-            "product_id": row[2],
-            "quantity": row[3],
-            "price": row[4],
-            "timestamp": row[5].strftime("%Y-%m-%dT%H:%M:%SZ")
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -562,3 +506,35 @@ async def get_s3_top_selling_products():
         return df.to_dict(orient='records')
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/api/purchase", response_model=dict, tags=["data_management"], openapi_extra={
+    "requestBody": {
+        "content": {
+            "application/json": {
+                "example": {
+                    "purchase_id": "p-001",
+                    "client_id": "c-123",
+                    "product_id": "prod-567",
+                    "quantity": 3,
+                    "price": 99.99,
+                    "timestamp": "2025-05-18T12:00:00Z"
+                }
+            }
+        }
+    }
+})
+async def purchase(request: Request):
+    """
+    Сырая ручка для добавления записи о покупке в Kafka-топик 'purchases'.
+    Просто берёт JSON из тела и шлёт в Kafka, без валидации.
+    """
+    data = await request.json()
+    try:
+        producer.produce(
+            topic=os.getenv("PURCHASES_TOPIC", "purchases"),
+            value=json.dumps(data).encode('utf-8')
+        )
+        producer.flush()
+        return {"status": "ok", "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
