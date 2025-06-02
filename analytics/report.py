@@ -1,10 +1,12 @@
 import os
 from pyspark.sql import SparkSession, functions as F, Window
+from datetime import datetime
 
 WAREHOUSE = "s3a://stage/warehouse"     # Iceberg warehouse
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_KEY = os.getenv("MINIO_ROOT_USER", "minio")
 MINIO_SECRET = os.getenv("MINIO_ROOT_PASSWORD", "minio123")
+REPORTS_BUCKET = "s3a://stage/reports"  # Bucket for reports
 
 spark = (
     SparkSession.builder.appName("Analytics_Job")
@@ -50,6 +52,18 @@ sellers.printSchema()
 print(f"Количество записей: {sellers.count()}")
 sellers.show(truncate=False)
 
+def save_report_to_s3(df, report_name):
+    """Сохраняет отчет в формате CSV в S3"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = f"{REPORTS_BUCKET}/{report_name}_{timestamp}.csv"
+    
+    df.write \
+        .mode("overwrite") \
+        .option("header", "true") \
+        .csv(output_path)
+    
+    print(f"Отчет сохранен в: {output_path}")
+
 def calculate_revenue_by_category(purchases_df, products_df) -> list:
     """Рассчитывает общую выручку и количество покупок по категориям товаров"""
     df = (
@@ -62,6 +76,10 @@ def calculate_revenue_by_category(purchases_df, products_df) -> list:
         )
         .orderBy(F.desc("total_revenue"))
     )
+    
+    # Сохраняем отчет в S3
+    save_report_to_s3(df, "revenue_by_category")
+    
     return [row.asDict() for row in df.collect()]
 
 def get_top_clients(purchases_df, limit=10) -> list:
@@ -72,6 +90,10 @@ def get_top_clients(purchases_df, limit=10) -> list:
         .orderBy(F.desc("purchase_count"))
         .limit(limit)
     )
+    
+    # Сохраняем отчет в S3
+    save_report_to_s3(df, "top_clients")
+    
     return [row.asDict() for row in df.collect()]
 
 def calculate_avg_check_by_day(purchases_df) -> list:
@@ -89,6 +111,10 @@ def calculate_avg_check_by_day(purchases_df) -> list:
         )
         .orderBy("date")
     )
+    
+    # Сохраняем отчет в S3
+    save_report_to_s3(df, "avg_check_by_day")
+    
     return [row.asDict() for row in df.collect()]
 
 def get_top_selling_products(purchases_df, products_df, limit=10) -> list:
@@ -108,6 +134,10 @@ def get_top_selling_products(purchases_df, products_df, limit=10) -> list:
         .filter(F.col("rank") <= limit)  # Топ-N вместо только первого места
         .orderBy("rank")
     )
+    
+    # Сохраняем отчет в S3
+    save_report_to_s3(df, "top_selling_products")
+    
     return [row.asDict() for row in df.collect()]
 
 #Вывод
