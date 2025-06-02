@@ -11,8 +11,27 @@ import boto3
 from botocore.client import Config
 import pandas as pd
 from io import StringIO
+from pathlib import Path
 
-app = FastAPI()
+app = FastAPI(
+    title="Purchase Analysis API",
+    description="API для анализа покупок в магазине",
+    version="1.0.0",
+    openapi_tags=[
+        {
+            "name": "data_management",
+            "description": "Эндпоинты для управления данными (товары, продавцы, покупки)"
+        },
+        {
+            "name": "clickhouse_analytics",
+            "description": "Аналитика в реальном времени из ClickHouse"
+        },
+        {
+            "name": "s3_analytics",
+            "description": "Аналитика из S3 (исторические отчеты)"
+        }
+    ]
+)
 
 # Настройка ClickHouse
 clickhouse_client = Client(
@@ -46,9 +65,281 @@ class Purchase(BaseModel):
     price: float
     timestamp: str
 
-# -------------------- Аналитические эндпоинты --------------------------------------
+class Product(BaseModel):
+    product_id: str
+    name: str
+    category: str
+    price: float
+    description: Optional[str] = None
+    seller_id: str
 
-@app.get("/api/analytics/top_products")
+class Seller(BaseModel):
+    seller_id: str
+    name: str
+    email: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+# -------------------- Эндпоинты для управления данными --------------------------
+
+@app.post("/api/products", response_model=Product, tags=["data_management"])
+async def create_product(product: Product):
+    """
+    Добавление нового товара в систему.
+    Отправляет данные в Kafka для последующей обработки.
+    """
+    try:
+        # Отправляем данные в Kafka
+        producer.produce(
+            topic=os.getenv("PRODUCTS_TOPIC", "products"),
+            value=json.dumps(product.dict()).encode('utf-8')
+        )
+        producer.flush()
+        return product
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
+
+@app.get("/api/products", response_model=List[Product], tags=["data_management"])
+async def get_products(category: Optional[str] = None, seller_id: Optional[str] = None):
+    """
+    Получение списка товаров с возможностью фильтрации по категории и продавцу
+    """
+    try:
+        query = """
+        SELECT 
+            product_id,
+            name,
+            category,
+            price,
+            description,
+            seller_id
+        FROM products_rt
+        WHERE 1=1
+        """
+        
+        params = []
+        if category:
+            query += " AND category = %s"
+            params.append(category)
+        if seller_id:
+            query += " AND seller_id = %s"
+            params.append(seller_id)
+            
+        result = clickhouse_client.execute(query, params)
+        
+        return [
+            {
+                "product_id": row[0],
+                "name": row[1],
+                "category": row[2],
+                "price": row[3],
+                "description": row[4],
+                "seller_id": row[5]
+            }
+            for row in result
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/sellers", response_model=Seller, tags=["data_management"])
+async def create_seller(seller: Seller):
+    """
+    Добавление нового продавца в систему.
+    Отправляет данные в Kafka для последующей обработки.
+    """
+    try:
+        # Отправляем данные в Kafka
+        producer.produce(
+            topic=os.getenv("SELLERS_TOPIC", "sellers"),
+            value=json.dumps(seller.dict()).encode('utf-8')
+        )
+        producer.flush()
+        return seller
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
+
+@app.get("/api/sellers", response_model=List[Seller], tags=["data_management"])
+async def get_sellers():
+    """
+    Получение списка всех продавцов
+    """
+    try:
+        query = """
+        SELECT 
+            seller_id,
+            name,
+            email,
+            phone,
+            address
+        FROM sellers_rt
+        """
+        
+        result = clickhouse_client.execute(query)
+        
+        return [
+            {
+                "seller_id": row[0],
+                "name": row[1],
+                "email": row[2],
+                "phone": row[3],
+                "address": row[4]
+            }
+            for row in result
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sellers/{seller_id}", response_model=Seller, tags=["data_management"])
+async def get_seller(seller_id: str):
+    """
+    Получение информации о конкретном продавце
+    """
+    try:
+        query = """
+        SELECT 
+            seller_id,
+            name,
+            email,
+            phone,
+            address
+        FROM sellers_rt
+        WHERE seller_id = %s
+        """
+        
+        result = clickhouse_client.execute(query, [seller_id])
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Seller not found")
+            
+        row = result[0]
+        return {
+            "seller_id": row[0],
+            "name": row[1],
+            "email": row[2],
+            "phone": row[3],
+            "address": row[4]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/purchases", response_model=Purchase, tags=["data_management"])
+async def create_purchase(purchase: Purchase):
+    """
+    Добавление новой покупки в систему.
+    Отправляет данные в Kafka для последующей обработки.
+    """
+    try:
+        # Если нет purchase_id, генерируем новый
+        if purchase.purchase_id is None:
+            purchase.purchase_id = uuid4()
+            
+        # Отправляем данные в Kafka
+        producer.produce(
+            topic=os.getenv("PURCHASES_TOPIC", "purchases"),
+            value=json.dumps(purchase.dict()).encode('utf-8')
+        )
+        producer.flush()
+        return purchase
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
+
+@app.get("/api/purchases", response_model=List[Purchase], tags=["data_management"])
+async def get_purchases(
+    client_id: Optional[str] = None,
+    product_id: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """
+    Получение списка покупок с возможностью фильтрации по:
+    - client_id: ID клиента
+    - product_id: ID товара
+    - start_date: начальная дата (включительно)
+    - end_date: конечная дата (включительно)
+    """
+    try:
+        query = """
+        SELECT 
+            purchase_id,
+            client_id,
+            product_id,
+            quantity,
+            price,
+            timestamp
+        FROM purchases_rt
+        WHERE 1=1
+        """
+        
+        params = []
+        if client_id:
+            query += " AND client_id = %s"
+            params.append(client_id)
+        if product_id:
+            query += " AND product_id = %s"
+            params.append(product_id)
+        if start_date:
+            query += " AND timestamp >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND timestamp <= %s"
+            params.append(end_date)
+            
+        query += " ORDER BY timestamp DESC"
+            
+        result = clickhouse_client.execute(query, params)
+        
+        return [
+            {
+                "purchase_id": row[0],
+                "client_id": row[1],
+                "product_id": row[2],
+                "quantity": row[3],
+                "price": row[4],
+                "timestamp": row[5].strftime("%Y-%m-%dT%H:%M:%SZ")
+            }
+            for row in result
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/purchases/{purchase_id}", response_model=Purchase, tags=["data_management"])
+async def get_purchase(purchase_id: str):
+    """
+    Получение информации о конкретной покупке
+    """
+    try:
+        query = """
+        SELECT 
+            purchase_id,
+            client_id,
+            product_id,
+            quantity,
+            price,
+            timestamp
+        FROM purchases_rt
+        WHERE purchase_id = %s
+        """
+        
+        result = clickhouse_client.execute(query, [purchase_id])
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Purchase not found")
+            
+        row = result[0]
+        return {
+            "purchase_id": row[0],
+            "client_id": row[1],
+            "product_id": row[2],
+            "quantity": row[3],
+            "price": row[4],
+            "timestamp": row[5].strftime("%Y-%m-%dT%H:%M:%SZ")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# -------------------- Аналитика из ClickHouse --------------------------
+
+@app.get("/api/analytics/top_products", tags=["clickhouse_analytics"])
 async def get_top_products(limit: int = 10):
     """
     Получить топ-N товаров по количеству продаж
@@ -76,7 +367,7 @@ async def get_top_products(limit: int = 10):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/sales_by_month")
+@app.get("/api/analytics/sales_by_month", tags=["clickhouse_analytics"])
 async def get_sales_by_month():
     """
     Получить статистику продаж по месяцам
@@ -105,7 +396,7 @@ async def get_sales_by_month():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/client_statistics")
+@app.get("/api/analytics/client_statistics", tags=["clickhouse_analytics"])
 async def get_client_statistics(client_id: str):
     """
     Получить статистику по конкретному клиенту
@@ -137,7 +428,7 @@ async def get_client_statistics(client_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/revenue_by_hour")
+@app.get("/api/analytics/revenue_by_hour", tags=["clickhouse_analytics"])
 async def get_revenue_by_hour():
     """
     Получить распределение выручки по часам
@@ -162,65 +453,9 @@ async def get_revenue_by_hour():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# -------------------- Эндпоинт: raw_purchase --------------------------------------
-@app.post("/api/raw_purchase", response_model=dict, openapi_extra={
-    "requestBody": {
-        "content": {
-            "application/json": {
-                "example": {
-                    "purchase_id": "p-001",
-                    "client_id": "c-123",
-                    "product_id": "prod-567",
-                    "quantity": 3,
-                    "price": 99.99,
-                    "timestamp": "2025-05-18T12:00:00Z"
-                }
-            }
-        }
-    }
-})
-async def raw_purchase(request: Request):
-    """
-    Сырая ручка для добавления записи о покупке в Kafka-топик 'purchases'.
-    Просто берёт JSON из тела и шлёт в Kafka, без валидации.
-    """
-    data = await request.json()
-    try:
-        producer.produce(
-            topic=os.getenv("PURCHASES_TOPIC", "purchases"),
-            value=json.dumps(data).encode('utf-8')
-        )
-        producer.flush()
-        return {"status": "ok", "data": data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
+# -------------------- Аналитика из S3 --------------------------
 
-
-# -------------------- Эндпоинт: валидированный purchase --------------------------
-@app.post("/api/purchase", response_model=Purchase)
-async def create_purchase(p: Purchase):
-    """
-    Валидированная ручка. Если purchase_id не указан, генерирует UUID. 
-    Отправляет сообщение в Kafka, возвращает Pydantic-модель.
-    """
-    rec = p.dict()
-    # Если нет purchase_id, генерируем новый
-    if rec["purchase_id"] is None:
-        rec["purchase_id"] = uuid4()
-    # Убедимся, что timestamp — datetime (Pydantic гарантирует)
-    try:
-        producer.produce(
-            topic=os.getenv("PURCHASES_TOPIC", "purchases"),
-            value=json.dumps(rec).encode('utf-8')
-        )
-        producer.flush()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Kafka produce error: {str(e)}")
-    return rec
-
-# -------------------- Эндпоинты для аналитики из S3 --------------------------
-
-@app.get("/api/analytics/s3/revenue_by_category")
+@app.get("/api/analytics/s3/revenue_by_category", tags=["s3_analytics"])
 async def get_s3_revenue_by_category():
     """
     Получить отчет о выручке по категориям из S3
@@ -250,7 +485,7 @@ async def get_s3_revenue_by_category():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/s3/top_clients")
+@app.get("/api/analytics/s3/top_clients", tags=["s3_analytics"])
 async def get_s3_top_clients():
     """
     Получить отчет о топ клиентах из S3
@@ -276,7 +511,7 @@ async def get_s3_top_clients():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/s3/avg_check_by_day")
+@app.get("/api/analytics/s3/avg_check_by_day", tags=["s3_analytics"])
 async def get_s3_avg_check_by_day():
     """
     Получить отчет о среднем чеке по дням из S3
@@ -302,7 +537,7 @@ async def get_s3_avg_check_by_day():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/analytics/s3/top_selling_products")
+@app.get("/api/analytics/s3/top_selling_products", tags=["s3_analytics"])
 async def get_s3_top_selling_products():
     """
     Получить отчет о топ продаваемых продуктах из S3
