@@ -50,9 +50,9 @@ services:
     entrypoint: >
       bash -c "
         until kafka-topics --bootstrap-server kafka:9092 --list &>/dev/null; do
-          echo '⏳ Жду готовности Kafka ...'; sleep 3;
+          echo 'Жду готовности Kafka ...'; sleep 3;
         done;
-        echo '✅ Kafka готов. Создаю топик purchases...';
+        echo 'Kafka готов. Создаю топик purchases...';
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic purchases --partitions 3 --replication-factor 1
       "
     restart: 'no'

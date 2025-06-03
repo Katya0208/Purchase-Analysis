@@ -1,4 +1,3 @@
-# streaming/consumer.py
 """
 Консьюмер Kafka → ClickHouse с использованием confluent-kafka.
 """
@@ -46,7 +45,7 @@ conf = {
 consumer = Consumer(conf)
 consumer.subscribe([os.getenv("PURCHASES_TOPIC", "purchases")])
 
-print("✅ Consumer started, waiting for messages…")
+print("Consumer started, waiting for messages…")
 print(f"Using consumer group: {conf['group.id']}")
 
 try:

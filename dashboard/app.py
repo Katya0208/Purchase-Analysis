@@ -23,10 +23,8 @@ def get_clickhouse_client():
 
 client = get_clickhouse_client()
 
-# Заголовок
 st.title("📊 Анализ покупок в магазине")
 
-# Получение данных
 @st.cache_data(ttl=300)  # Кэшируем на 5 минут
 def get_top_products(limit=10):
     query = f"""

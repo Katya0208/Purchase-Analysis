@@ -11,5 +11,5 @@ df = pd.DataFrame({
     "updated_at": [dt.datetime.now(dt.timezone.utc).isoformat()] * 5
 })
 
-df.to_parquet("sample_products.parquet", index=False)   # требует pyarrow
-print("✅ Parquet-файл sample_products.parquet создан")
+df.to_parquet("sample_products.parquet", index=False)
+print("Parquet-файл sample_products.parquet создан")
