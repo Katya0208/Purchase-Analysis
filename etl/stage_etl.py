@@ -1,4 +1,3 @@
-# etl/stage_etl.py
 """
 PySpark-джоба: PostgreSQL + MinIO + Kafka → Stage (Iceberg)
 Запуск ВНУТРИ spark-master:
@@ -57,7 +56,7 @@ for name in ("clients", "sellers"):
         spark.read.jdbc(
             url=jdbc_url,
             table=f"public.{name}",
-            properties=props          # <-- ключевое слово
+            properties=props 
         )
         .withColumn("load_date", F.current_date())
         .write.format("iceberg").mode("overwrite")
@@ -102,4 +101,4 @@ purchases = (raw.select(F.from_json(F.col("value").cast("string"), schema).alias
          .saveAsTable("spark_catalog.default.stage_purchases"))
 print("✓ stage_purchases")
 
-print("✅ Stage ETL done")
+print("Stage ETL done")
