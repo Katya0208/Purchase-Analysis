@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
-NETWORK="docker_default"      # если другое имя — поменяйте
+NETWORK="docker_default"
 
 # ждём, пока MinIO начнёт отвечать
-echo "⏳  Жду старта MinIO..."
+echo "Жду старта MinIO..."
 until docker run --rm --network $NETWORK curl -s http://minio:9000/minio/health/ready >/dev/null; do
   sleep 1
 done
-echo "✅  MinIO готов!"
+echo "MinIO готов!"
 
-# одна команда в одном контейнере  → alias сохраняется на время выполнения
 docker run --rm --network $NETWORK \
   -e MINIO_ROOT_USER=$MINIO_ROOT_USER \
   -e MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD \
