@@ -1,8 +1,7 @@
-# etl/count_stage.py
 from pyspark.sql import SparkSession
 import os
 
-# 1) Создаём SparkSession
+# создаём SparkSession
 spark = (
     SparkSession.builder
     .appName("CountStage")
@@ -17,14 +16,14 @@ spark = (
     .getOrCreate()
 )
 
-# 2) Отключаем подробные логи
+# отключаем подробные логи
 spark.sparkContext.setLogLevel("ERROR")
 
-# 3) Считаем строки
+# считаем строки
 tables = ["stage_clients", "stage_sellers", "stage_products", "stage_purchases"]
 for t in tables:
     df = spark.table(f"spark_catalog.default.{t}")
     print(f"{t}: {df.count()} rows")
 
-# 4) Закрываем сессию
+# закрываем сессию
 spark.stop()
