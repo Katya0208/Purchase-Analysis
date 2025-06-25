@@ -1,5 +1,7 @@
 # Проект "Анализ покупок в магазине"
 
+**Презентация:** https://docs.google.com/presentation/d/1izAN3oGueOWebdAMY997vB4PLCvE95Nv/edit?usp=sharing&ouid=110097254864650217421&rtpof=true&sd=true
+
 ## Оглавление
 
 1. [Описание архитектуры](#описание-архитектуры)  
